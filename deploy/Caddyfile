@@ -1,0 +1,16 @@
+# ─────────────────────────────────────────────────────────────────────
+# Caddyfile for Budgeto — auto-HTTPS via Let's Encrypt
+# Place this file at ~/budgeto/Caddyfile on the VPS.
+# ─────────────────────────────────────────────────────────────────────
+
+budgeto.app {
+	# API requests → Hono backend
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	# Everything else → React Router frontend
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

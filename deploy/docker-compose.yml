@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────
+# Docker Compose for Budgeto — runs on the Mammoth Cloud VPS
+# Place this file at ~/budgeto/docker-compose.yml on the VPS.
+#
+# Usage:
+#   docker compose up -d              # start everything
+#   docker compose pull api frontend  # pull latest images
+#   docker compose up -d api          # restart just the API
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - api
+    restart: unless-stopped
+
+  frontend:
+    # TODO: Replace YOUR_GITHUB_USERNAME with your actual GitHub username
+    image: ghcr.io/YOUR_GITHUB_USERNAME/budgeto_v2:latest
+    expose:
+      - '3000'
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+
+  api:
+    # TODO: Replace YOUR_GITHUB_USERNAME with your actual GitHub username
+    image: ghcr.io/YOUR_GITHUB_USERNAME/budgeto_api:latest
+    expose:
+      - '4000'
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
