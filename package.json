@@ -4,9 +4,9 @@
   "description": "Backend API for Budgeto — built with Hono, Drizzle ORM, and PostgreSQL",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
     "build": "tsup",
-    "start": "node dist/index.js",
+    "start": "tsx watch src/index.ts",
+    "start:prod": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push",
