@@ -3,15 +3,23 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 
-async function runMigrations() {
-	const DATABASE_URL = process.env.DATABASE_URL;
+const requiredVars = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'] as const;
 
-	if (!DATABASE_URL) {
-		console.error('❌ DATABASE_URL environment variable is required');
+async function runMigrations() {
+	const missing = requiredVars.filter((k) => !process.env[k]);
+	if (missing.length) {
+		console.error(`❌ Missing required env vars: ${missing.join(', ')}`);
 		process.exit(1);
 	}
 
-	const client = postgres(DATABASE_URL, { max: 1 });
+	const client = postgres({
+		host: process.env.DB_HOST!,
+		port: Number(process.env.DB_PORT ?? 5432),
+		database: process.env.DB_NAME!,
+		username: process.env.DB_USER!,
+		password: process.env.DB_PASSWORD!,
+		max: 1,
+	});
 	const db = drizzle(client);
 
 	console.log('⏳ Running migrations...');
@@ -22,6 +30,9 @@ async function runMigrations() {
 }
 
 runMigrations().catch((err) => {
-	console.error('❌ Migration failed:', err);
+	// Sanitize — never log connection strings or credentials
+	const safeMessage =
+		err instanceof Error ? err.message : 'Unknown error';
+	console.error('❌ Migration failed:', safeMessage);
 	process.exit(1);
 });

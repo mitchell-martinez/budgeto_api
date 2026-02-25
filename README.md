@@ -44,7 +44,7 @@ npm install
 
 # 2. Create your .env from the template
 cp .env.example .env
-# Edit .env — set DATABASE_URL to your local Postgres
+# Edit .env — set DB_HOST, DB_USER, DB_PASSWORD, etc. for your local Postgres
 
 # 3. Create the database
 createdb budgeto   # or via psql / pgAdmin

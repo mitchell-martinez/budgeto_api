@@ -38,7 +38,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
         env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/budgeto_test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: budgeto_test
+          DB_USER: test
+          DB_PASSWORD: test
           JWT_SECRET: test-secret-key-that-is-at-least-32-characters
           CORS_ORIGIN: http://localhost:3000
           NODE_ENV: test

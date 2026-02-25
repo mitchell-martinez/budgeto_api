@@ -2,7 +2,11 @@ import 'dotenv/config';
 import { z } from 'zod';
 
 const envSchema = z.object({
-	DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+	DB_HOST: z.string().min(1, 'DB_HOST is required'),
+	DB_PORT: z.coerce.number().default(5432),
+	DB_NAME: z.string().min(1, 'DB_NAME is required'),
+	DB_USER: z.string().min(1, 'DB_USER is required'),
+	DB_PASSWORD: z.string().min(1, 'DB_PASSWORD is required'),
 	JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
 	CORS_ORIGIN: z.string().url().default('https://budgeto.app'),
 	PORT: z.coerce.number().default(4000),
