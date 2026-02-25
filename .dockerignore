@@ -4,4 +4,3 @@ dist/
 .git/
 .github/
 *.md
-drizzle/meta/
