@@ -4,6 +4,7 @@ import { verifyAccessToken } from '../lib/tokens';
 type AuthEnv = {
 	Variables: {
 		userId: string;
+		isDemo: boolean;
 	};
 };
 
@@ -19,6 +20,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 	try {
 		const payload = await verifyAccessToken(token);
 		c.set('userId', payload.sub);
+		c.set('isDemo', payload.demo === true);
 		await next();
 	} catch {
 		return c.json({ error: 'Invalid or expired token' }, 401);
