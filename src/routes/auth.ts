@@ -1,11 +1,12 @@
 import { zValidator } from '@hono/zod-validator';
 import bcrypt from 'bcryptjs';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { db } from '../db';
-import { refreshTokens, users } from '../db/schema';
+import { passwordResetTokens, refreshTokens, users } from '../db/schema';
 import { env } from '../lib/env';
 import
 	{
@@ -43,13 +44,35 @@ const loginSchema = z.object({
 	rememberMe: z.boolean().default(false),
 });
 
+const passwordResetRequestSchema = z.object({
+	email: z
+		.string()
+		.email()
+		.max(255)
+		.transform((e) => e.toLowerCase().trim()),
+});
+
+const passwordResetConfirmSchema = z.object({
+	token: z.string().min(20).max(256),
+	newPassword: z.string().min(8).max(128),
+});
+
+const deleteAccountSchema = z.object({
+	confirmEmail: z
+		.string()
+		.email()
+		.max(255)
+		.transform((e) => e.toLowerCase().trim()),
+});
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 const REFRESH_COOKIE_NAME = 'refresh_token';
 const REFRESH_COOKIE_PATH = '/api/auth';
+const PASSWORD_RESET_EXPIRY_SECONDS = 15 * 60;
 
 async function issueRefreshToken(
-	c: Context,
+	context: Context,
 	userId: string,
 	rememberMe: boolean,
 ): Promise<void> {
@@ -66,7 +89,7 @@ async function issueRefreshToken(
 		expiresAt,
 	});
 
-	setCookie(c, REFRESH_COOKIE_NAME, token, {
+	setCookie(context, REFRESH_COOKIE_NAME, token, {
 		httpOnly: true,
 		secure: env.NODE_ENV === 'production',
 		sameSite: 'Strict',
@@ -75,14 +98,22 @@ async function issueRefreshToken(
 	});
 }
 
+function generatePasswordResetToken(): string {
+	return randomBytes(32).toString('base64url');
+}
+
+function hashOpaqueToken(token: string): string {
+	return createHash('sha256').update(token).digest('hex');
+}
+
 // ── POST /api/auth/register ──────────────────────────────────────────
 
 auth.post(
 	'/register',
 	rateLimiter({ max: 5, windowMs: 60 * 1000 }),
 	zValidator('json', registerSchema),
-	async (c) => {
-		const { email, password } = c.req.valid('json');
+	async (context) => {
+		const { email, password } = context.req.valid('json');
 
 		// Check if email is already taken
 		const existing = await db
@@ -92,7 +123,7 @@ auth.post(
 			.limit(1);
 
 		if (existing.length > 0) {
-			return c.json({ error: 'Email already registered' }, 409);
+			return context.json({ error: 'Email already registered' }, 409);
 		}
 
 		const passwordHash = await bcrypt.hash(password, 12);
@@ -103,9 +134,9 @@ auth.post(
 			.returning({ id: users.id });
 
 		const accessToken = await createAccessToken(user.id);
-		await issueRefreshToken(c, user.id, false);
+		await issueRefreshToken(context, user.id, false);
 
-		return c.json({ accessToken, user: { id: user.id, email } }, 201);
+		return context.json({ accessToken, user: { id: user.id, email } }, 201);
 	},
 );
 
@@ -115,8 +146,8 @@ auth.post(
 	'/login',
 	rateLimiter({ max: 10, windowMs: 60 * 1000 }),
 	zValidator('json', loginSchema),
-	async (c) => {
-		const { email, password, rememberMe } = c.req.valid('json');
+	async (context) => {
+		const { email, password, rememberMe } = context.req.valid('json');
 
 		const [user] = await db
 			.select()
@@ -125,13 +156,13 @@ auth.post(
 			.limit(1);
 
 		if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-			return c.json({ error: 'Invalid email or password' }, 401);
+			return context.json({ error: 'Invalid email or password' }, 401);
 		}
 
 		const accessToken = await createAccessToken(user.id);
-		await issueRefreshToken(c, user.id, rememberMe);
+		await issueRefreshToken(context, user.id, rememberMe);
 
-		return c.json({
+		return context.json({
 			accessToken,
 			user: { id: user.id, email: user.email },
 		});
@@ -142,11 +173,11 @@ auth.post(
 // Silent refresh — the frontend calls this on startup and on 401 responses
 // to transparently extend the session without forcing a re-login.
 
-auth.post('/refresh', async (c) => {
-	const token = getCookie(c, REFRESH_COOKIE_NAME);
+auth.post('/refresh', async (context) => {
+	const token = getCookie(context, REFRESH_COOKIE_NAME);
 
 	if (!token) {
-		return c.json({ error: 'No refresh token' }, 401);
+		return context.json({ error: 'No refresh token' }, 401);
 	}
 
 	const tokenHash = hashToken(token);
@@ -159,11 +190,11 @@ auth.post('/refresh', async (c) => {
 
 	if (!stored || stored.expiresAt < new Date()) {
 		// Clean up expired/invalid token
-		deleteCookie(c, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+		deleteCookie(context, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
 		if (stored) {
 			await db.delete(refreshTokens).where(eq(refreshTokens.id, stored.id));
 		}
-		return c.json({ error: 'Invalid or expired refresh token' }, 401);
+		return context.json({ error: 'Invalid or expired refresh token' }, 401);
 	}
 
 	// Rotate: delete old token, issue new one
@@ -175,31 +206,123 @@ auth.post('/refresh', async (c) => {
 	const rememberMe = originalLifetimeMs > REFRESH_TOKEN_EXPIRY_SHORT * 1000;
 
 	const accessToken = await createAccessToken(stored.userId);
-	await issueRefreshToken(c, stored.userId, rememberMe);
+	await issueRefreshToken(context, stored.userId, rememberMe);
 
-	return c.json({ accessToken });
+	return context.json({ accessToken });
 });
 
 // ── POST /api/auth/logout ────────────────────────────────────────────
 
-auth.post('/logout', async (c) => {
-	const token = getCookie(c, REFRESH_COOKIE_NAME);
+auth.post('/logout', async (context) => {
+	const token = getCookie(context, REFRESH_COOKIE_NAME);
 
 	if (token) {
 		const tokenHash = hashToken(token);
 		await db
 			.delete(refreshTokens)
 			.where(eq(refreshTokens.tokenHash, tokenHash));
-		deleteCookie(c, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+		deleteCookie(context, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
 	}
 
-	return c.json({ success: true });
+	return context.json({ success: true });
 });
+
+// ── POST /api/auth/password-reset/request ───────────────────────────
+
+auth.post(
+	'/password-reset/request',
+	rateLimiter({ max: 5, windowMs: 60 * 1000 }),
+	zValidator('json', passwordResetRequestSchema),
+	async (context) => {
+		const { email } = context.req.valid('json');
+
+		const [user] = await db
+			.select({ id: users.id, email: users.email })
+			.from(users)
+			.where(eq(users.email, email))
+			.limit(1);
+
+		if (!user) {
+			return context.json({ success: true });
+		}
+
+		const token = generatePasswordResetToken();
+		const tokenHash = hashOpaqueToken(token);
+		const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_SECONDS * 1000);
+
+		await db.insert(passwordResetTokens).values({
+			userId: user.id,
+			tokenHash,
+			expiresAt,
+		});
+
+		if (env.NODE_ENV !== 'production') {
+			return context.json({
+				success: true,
+				resetUrl: `http://localhost:5173/reset-password?token=${token}`,
+			});
+		}
+
+		return context.json({ success: true });
+	},
+);
+
+// ── POST /api/auth/password-reset/confirm ───────────────────────────
+
+auth.post(
+	'/password-reset/confirm',
+	rateLimiter({ max: 10, windowMs: 60 * 1000 }),
+	zValidator('json', passwordResetConfirmSchema),
+	async (context) => {
+		const { token, newPassword } = context.req.valid('json');
+		const tokenHash = hashOpaqueToken(token);
+
+		const [resetToken] = await db
+			.select({
+				id: passwordResetTokens.id,
+				userId: passwordResetTokens.userId,
+				expiresAt: passwordResetTokens.expiresAt,
+			})
+			.from(passwordResetTokens)
+			.where(
+				and(
+					eq(passwordResetTokens.tokenHash, tokenHash),
+					isNull(passwordResetTokens.usedAt),
+					gt(passwordResetTokens.expiresAt, new Date()),
+				),
+			)
+			.limit(1);
+
+		if (!resetToken) {
+			return context.json({ error: 'Invalid or expired reset token' }, 400);
+		}
+
+		const passwordHash = await bcrypt.hash(newPassword, 12);
+
+		await db.transaction(async (tx) => {
+			await tx
+				.update(users)
+				.set({ passwordHash })
+				.where(eq(users.id, resetToken.userId));
+
+			await tx
+				.update(passwordResetTokens)
+				.set({ usedAt: new Date() })
+				.where(eq(passwordResetTokens.id, resetToken.id));
+
+			await tx
+				.delete(refreshTokens)
+				.where(eq(refreshTokens.userId, resetToken.userId));
+		});
+
+		return context.json({ success: true });
+	},
+);
 
 // ── GET /api/auth/me ─────────────────────────────────────────────────
 
-auth.get('/me', authMiddleware, async (c) => {
-	const userId = c.get('userId');
+auth.get('/me', authMiddleware, async (context) => {
+	const userId = context.get('userId');
 
 	const [user] = await db
 		.select({ id: users.id, email: users.email })
@@ -208,10 +331,41 @@ auth.get('/me', authMiddleware, async (c) => {
 		.limit(1);
 
 	if (!user) {
-		return c.json({ error: 'User not found' }, 404);
+		return context.json({ error: 'User not found' }, 404);
 	}
 
-	return c.json(user);
+	return context.json(user);
 });
+
+// ── DELETE /api/auth/account ────────────────────────────────────────
+
+auth.delete(
+	'/account',
+	authMiddleware,
+	zValidator('json', deleteAccountSchema),
+	async (context) => {
+		const userId = context.get('userId');
+		const { confirmEmail } = context.req.valid('json');
+
+		const [user] = await db
+			.select({ id: users.id, email: users.email })
+			.from(users)
+			.where(eq(users.id, userId))
+			.limit(1);
+
+		if (!user) {
+			return context.json({ error: 'User not found' }, 404);
+		}
+
+		if (user.email !== confirmEmail) {
+			return context.json({ error: 'Confirmation email does not match account' }, 400);
+		}
+
+		await db.delete(users).where(eq(users.id, userId));
+		deleteCookie(context, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+
+		return context.json({ success: true });
+	},
+);
 
 export default auth;
