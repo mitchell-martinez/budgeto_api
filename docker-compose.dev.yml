@@ -8,9 +8,9 @@ services:
     ports:
       - '5432:5432'
     environment:
-      POSTGRES_USER: username
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: database
+      POSTGRES_USER: budgeto
+      POSTGRES_PASSWORD: budgeto
+      POSTGRES_DB: budgeto
     volumes:
       - pgdata_dev:/var/lib/postgresql/data
     healthcheck:

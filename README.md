@@ -19,56 +19,100 @@ Built with **Hono**, **Drizzle ORM**, **PostgreSQL**, and **TypeScript**.
 
 ## API Endpoints
 
-| Method | Path                  | Auth   | Description                                  |
-| ------ | --------------------- | ------ | -------------------------------------------- |
-| `GET`  | `/api/health`         | No     | Health check                                 |
-| `POST` | `/api/auth/register`  | No     | Create account                               |
-| `POST` | `/api/auth/login`     | No     | Sign in (returns JWT + sets refresh cookie)  |
-| `POST` | `/api/auth/refresh`   | Cookie | Silent token refresh                         |
-| `POST` | `/api/auth/logout`    | Cookie | Revoke refresh token                         |
-| `POST` | `/api/budget/sync`    | Bearer | Process a sync operation (add/update/delete) |
-| `GET`  | `/api/budget/entries` | Bearer | Fetch all entries for the authenticated user |
+| Method | Path                       | Auth   | Description                                  |
+| ------ | -------------------------- | ------ | -------------------------------------------- |
+| `GET`  | `/api/health`              | No     | Health check                                 |
+| `POST` | `/api/auth/register`       | No     | Create account                               |
+| `POST` | `/api/auth/login`          | No     | Sign in (returns JWT + sets refresh cookie)  |
+| `POST` | `/api/auth/refresh`        | Cookie | Silent token refresh                         |
+| `POST` | `/api/auth/logout`         | Cookie | Revoke refresh token                         |
+| `GET`  | `/api/auth/me`             | Bearer | Get authenticated user profile               |
+| `POST` | `/api/budget/sync`         | Bearer | Process a sync operation (add/update/delete) |
+| `POST` | `/api/budget/sync/batch`   | Bearer | Process multiple sync operations at once     |
+| `GET`  | `/api/budget/entries`      | Bearer | Fetch all entries for the authenticated user |
 
 ## Local Development
 
 ### Prerequisites
 
 - Node.js ≥ 20
-- PostgreSQL 16 (local or Docker)
+- Docker (recommended) or a local PostgreSQL 16 installation
 
-### Setup
+### Quick Start (Docker — recommended)
 
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Create your .env from the template
+# 2. Start a local Postgres container
+docker compose -f docker-compose.dev.yml up -d
+
+# 3. Create your .env from the template
 cp .env.example .env
-# Edit .env — set DB_HOST, DB_USER, DB_PASSWORD, etc. for your local Postgres
+# The defaults match docker-compose.dev.yml — no edits needed
 
-# 3. Create the database
-createdb budgeto   # or via psql / pgAdmin
-
-# 4. Run migrations
+# 4. Run database migrations
 npm run db:migrate
 
-# 5. Start the dev server (auto-reload)
-npm run dev
+# 5. Seed a test user + sample budget entries
+npm run db:seed
+# Creates: test@budgeto.app / password123
+
+# 6. Start the dev server (auto-reload)
+npm start
 ```
 
-The API will be running at `http://localhost:4000`.
+The API will be running at **http://localhost:4000**.
+
+> **Tip:** The frontend dev server runs on `http://localhost:5173` by default. The `.env.example` already has `CORS_ORIGIN=http://localhost:5173` so cross-origin requests work out of the box.
+
+### Without Docker
+
+If you have PostgreSQL installed natively:
+
+```bash
+# Create the database
+createdb budgeto
+
+# Copy and edit .env to match your local Postgres credentials
+cp .env.example .env
+# Edit DB_USER, DB_PASSWORD, etc.
+
+# Then follow steps 1, 4, 5, 6 above
+```
 
 ### Useful Commands
 
 ```bash
-npm run dev          # Start dev server with hot reload
+npm start            # Start dev server with hot reload (tsx watch)
 npm run build        # Build for production (tsup → dist/)
-npm run start        # Run production build
+npm run start:prod   # Run production build
 npm run typecheck    # Type-check without emitting
-npm run test         # Run tests
+npm run test:watch   # Run tests in watch mode
 npm run db:generate  # Generate migration SQL from schema changes
 npm run db:migrate   # Apply pending migrations
+npm run db:seed      # Seed test user + sample entries
+npm run db:push      # Push schema directly (skip migrations)
 npm run db:studio    # Open Drizzle Studio (DB browser)
+```
+
+### Testing the API
+
+Once the server is running, you can verify it's working:
+
+```bash
+# Health check
+curl http://localhost:4000/api/health
+
+# Register a new user
+curl -X POST http://localhost:4000/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"mypassword"}'
+
+# Or log in with the seeded test user
+curl -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"test@budgeto.app","password":"password123"}'
 ```
 
 ## Database Schema

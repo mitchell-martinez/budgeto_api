@@ -167,6 +167,103 @@ budget.post('/sync', zValidator('json', syncOperationSchema), async (c) => {
 	return c.json({ success: true });
 });
 
+// ── POST /api/budget/sync/batch ──────────────────────────────────────
+// Accepts an array of SyncOperations, applying them sequentially.
+// Used by the frontend to drain its offline queue in a single request.
+
+const batchSyncSchema = z.object({
+	operations: z.array(syncOperationSchema).min(1).max(200),
+});
+
+budget.post(
+	'/sync/batch',
+	zValidator('json', batchSyncSchema),
+	async (c) => {
+		const isDemo = c.get('isDemo');
+
+		if (isDemo) {
+			return c.json({ error: 'Demo sessions are read-only' }, 403);
+		}
+
+		const userId = c.get('userId');
+		const { operations } = c.req.valid('json');
+		const now = new Date();
+
+		for (const op of operations) {
+			const { type, payload } = op;
+
+			switch (type) {
+				case 'add': {
+					if (!payload.amount || !payload.entryType) {
+						continue; // Skip malformed ops in batch
+					}
+
+					await db
+						.insert(budgetEntries)
+						.values({
+							id: payload.entryId,
+							userId,
+							amount: String(payload.amount),
+							description: payload.description ?? '',
+							type: payload.entryType,
+							createdAt: payload.createdAt
+								? new Date(payload.createdAt)
+								: now,
+							updatedAt: now,
+						})
+						.onConflictDoUpdate({
+							target: budgetEntries.id,
+							set: {
+								amount: String(payload.amount),
+								description: payload.description ?? '',
+								type: payload.entryType,
+								updatedAt: now,
+								deletedAt: null,
+							},
+						});
+					break;
+				}
+
+				case 'update': {
+					const updates: Record<string, unknown> = { updatedAt: now };
+					if (payload.amount !== undefined)
+						updates.amount = String(payload.amount);
+					if (payload.description !== undefined)
+						updates.description = payload.description;
+					if (payload.entryType !== undefined)
+						updates.type = payload.entryType;
+
+					await db
+						.update(budgetEntries)
+						.set(updates)
+						.where(
+							and(
+								eq(budgetEntries.id, payload.entryId),
+								eq(budgetEntries.userId, userId),
+							),
+						);
+					break;
+				}
+
+				case 'delete': {
+					await db
+						.update(budgetEntries)
+						.set({ deletedAt: now, updatedAt: now })
+						.where(
+							and(
+								eq(budgetEntries.id, payload.entryId),
+								eq(budgetEntries.userId, userId),
+							),
+						);
+					break;
+				}
+			}
+		}
+
+		return c.json({ success: true, processed: operations.length });
+	},
+);
+
 // ── GET /api/budget/entries ──────────────────────────────────────────
 // Returns the full snapshot of non-deleted entries for the authenticated user.
 // The frontend calls this after draining its sync queue to pull server truth.

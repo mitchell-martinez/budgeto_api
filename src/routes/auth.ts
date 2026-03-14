@@ -7,15 +7,14 @@ import { z } from 'zod';
 import { db } from '../db';
 import { refreshTokens, users } from '../db/schema';
 import { env } from '../lib/env';
-import {
-    createAccessToken,
-    createDemoToken,
-    DEMO_TOKEN_EXPIRY,
-    generateRefreshToken,
-    hashToken,
-    REFRESH_TOKEN_EXPIRY_LONG,
-    REFRESH_TOKEN_EXPIRY_SHORT,
-} from '../lib/tokens';
+import
+	{
+		createAccessToken,
+		generateRefreshToken,
+		hashToken,
+		REFRESH_TOKEN_EXPIRY_LONG,
+		REFRESH_TOKEN_EXPIRY_SHORT
+	} from '../lib/tokens';
 import { authMiddleware } from '../middleware/auth';
 import { rateLimiter } from '../middleware/rateLimiter';
 
@@ -197,44 +196,13 @@ auth.post('/logout', async (c) => {
 	return c.json({ success: true });
 });
 
-// ── POST /api/auth/demo ──────────────────────────────────────────────
-// Issues a short-lived (1 h) demo session so visitors can try Budgeto
-// without creating an account.  No refresh token is issued — the session
-// ends when the token expires or the browser tab is closed.
-
-auth.post(
-	'/demo',
-	rateLimiter({ max: 20, windowMs: 60 * 1000 }),
-	async (c) => {
-		const accessToken = await createDemoToken();
-
-		// Set a session cookie so the frontend can detect the demo session
-		// without persisting anything to the DB.
-		setCookie(c, 'demo_session', 'true', {
-			httpOnly: false, // Readable by JS so the UI can show a "demo" banner
-			secure: env.NODE_ENV === 'production',
-			sameSite: 'Strict',
-			maxAge: DEMO_TOKEN_EXPIRY,
-		});
-
-		return c.json({ accessToken, demo: true });
-	},
-);
-
 // ── GET /api/auth/me ─────────────────────────────────────────────────
-// Returns the authenticated user's public profile.
-// Demo users receive a minimal placeholder object.
 
 auth.get('/me', authMiddleware, async (c) => {
 	const userId = c.get('userId');
-	const isDemo = c.get('isDemo');
-
-	if (isDemo) {
-		return c.json({ id: 'demo', email: null, createdAt: null, demo: true });
-	}
 
 	const [user] = await db
-		.select({ id: users.id, email: users.email, createdAt: users.createdAt })
+		.select({ id: users.id, email: users.email })
 		.from(users)
 		.where(eq(users.id, userId))
 		.limit(1);
@@ -243,7 +211,7 @@ auth.get('/me', authMiddleware, async (c) => {
 		return c.json({ error: 'User not found' }, 404);
 	}
 
-	return c.json({ id: user.id, email: user.email, createdAt: user.createdAt, demo: false });
+	return c.json(user);
 });
 
 export default auth;
