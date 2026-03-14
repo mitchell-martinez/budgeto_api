@@ -9,6 +9,7 @@ import { authMiddleware } from '../middleware/auth';
 type BudgetEnv = {
 	Variables: {
 		userId: string;
+		isDemo: boolean;
 	};
 };
 
@@ -38,11 +39,58 @@ const syncOperationSchema = z.object({
 	timestamp: z.number(),
 });
 
+// ── Static demo data ─────────────────────────────────────────────────
+// Served to demo users so they can explore the app without a real account.
+
+const DEMO_ENTRIES = [
+	{
+		id: 'demo-1',
+		amount: 3500,
+		description: 'Monthly salary',
+		type: 'income',
+		createdAt: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(),
+	},
+	{
+		id: 'demo-2',
+		amount: 1200,
+		description: 'Rent',
+		type: 'expense',
+		createdAt: new Date(Date.now() - 24 * 24 * 60 * 60 * 1000).toISOString(),
+	},
+	{
+		id: 'demo-3',
+		amount: 200,
+		description: 'Groceries',
+		type: 'expense',
+		createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
+	},
+	{
+		id: 'demo-4',
+		amount: 500,
+		description: 'Emergency fund',
+		type: 'savings_deposit',
+		createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(),
+	},
+	{
+		id: 'demo-5',
+		amount: 80,
+		description: 'Internet bill',
+		type: 'expense',
+		createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+	},
+];
+
 // ── POST /api/budget/sync ────────────────────────────────────────────
 // Accepts a single SyncOperation from the frontend's offline queue.
 // Operations are idempotent — safe to replay on reconnect.
 
 budget.post('/sync', zValidator('json', syncOperationSchema), async (c) => {
+	const isDemo = c.get('isDemo');
+
+	if (isDemo) {
+		return c.json({ error: 'Demo sessions are read-only' }, 403);
+	}
+
 	const userId = c.get('userId');
 	const op = c.req.valid('json');
 	const { type, payload } = op;
@@ -124,6 +172,12 @@ budget.post('/sync', zValidator('json', syncOperationSchema), async (c) => {
 // The frontend calls this after draining its sync queue to pull server truth.
 
 budget.get('/entries', async (c) => {
+	const isDemo = c.get('isDemo');
+
+	if (isDemo) {
+		return c.json({ entries: DEMO_ENTRIES, demo: true });
+	}
+
 	const userId = c.get('userId');
 
 	const entries = await db
@@ -147,7 +201,7 @@ budget.get('/entries', async (c) => {
 		createdAt: e.createdAt.toISOString(),
 	}));
 
-	return c.json({ entries: transformed });
+	return c.json({ entries: transformed, demo: false });
 });
 
 export default budget;
